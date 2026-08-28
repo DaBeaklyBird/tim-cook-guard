@@ -27,6 +27,10 @@ namespace TimCookGuard
                     && GuardContext.IsTopLeft(new Point(0, 0), testScreen)
                     && !GuardContext.IsTopRight(new Point(960, 540), testScreen)
                     && !GuardContext.IsTopLeft(new Point(960, 540), testScreen)
+                    && GuardSettings.IsValidUnlockCode("cook")
+                    && GuardSettings.IsValidUnlockCode("pineapple")
+                    && !GuardSettings.IsValidUnlockCode("1234")
+                    && HotkeyFormatter.Format(HotkeyFormatter.Control | HotkeyFormatter.Alt, Keys.T) == "Ctrl + Alt + T"
                     && EmbeddedResourceExists("TimCookGuard.tim-cook.jpg", 1024)
                     && EmbeddedResourceExists("TimCookGuard.logo.png", 1024)
                     && EmbeddedResourceExists("TimCookGuard.wow.mp3", 1024);
@@ -71,6 +75,9 @@ namespace TimCookGuard
         internal bool CaptureVideo = true;
         internal bool DiscordEnabled;
         internal string DiscordWebhook = String.Empty;
+        internal int HotkeyModifiers = HotkeyFormatter.Control | HotkeyFormatter.Alt;
+        internal Keys HotkeyKey = Keys.T;
+        internal string UnlockCode = "cook";
 
         internal static GuardSettings Load()
         {
@@ -89,6 +96,9 @@ namespace TimCookGuard
                     settings.CapturePhoto = ReadBool(key, "CapturePhoto", true);
                     settings.CaptureVideo = ReadBool(key, "CaptureVideo", true);
                     settings.DiscordEnabled = ReadBool(key, "DiscordEnabled", false);
+                    settings.HotkeyModifiers = ReadInt(key, "HotkeyModifiers", HotkeyFormatter.Control | HotkeyFormatter.Alt, 1, 7);
+                    settings.HotkeyKey = ReadHotkeyKey(key, "HotkeyKey", Keys.T);
+                    settings.UnlockCode = ReadUnlockCode(key, "UnlockCode", "cook");
                     string protectedWebhook = Convert.ToString(key.GetValue("DiscordWebhook", String.Empty));
                     if (!String.IsNullOrEmpty(protectedWebhook))
                     {
@@ -119,6 +129,9 @@ namespace TimCookGuard
                 key.SetValue("CapturePhoto", CapturePhoto ? 1 : 0, RegistryValueKind.DWord);
                 key.SetValue("CaptureVideo", CaptureVideo ? 1 : 0, RegistryValueKind.DWord);
                 key.SetValue("DiscordEnabled", DiscordEnabled ? 1 : 0, RegistryValueKind.DWord);
+                key.SetValue("HotkeyModifiers", HotkeyModifiers, RegistryValueKind.DWord);
+                key.SetValue("HotkeyKey", (int)HotkeyKey, RegistryValueKind.DWord);
+                key.SetValue("UnlockCode", UnlockCode, RegistryValueKind.String);
                 string protectedWebhook = String.Empty;
                 if (!String.IsNullOrWhiteSpace(DiscordWebhook))
                 {
@@ -141,6 +154,53 @@ namespace TimCookGuard
         {
             int value;
             return Int32.TryParse(Convert.ToString(key.GetValue(name, fallback ? 1 : 0)), out value) ? value != 0 : fallback;
+        }
+
+        private static Keys ReadHotkeyKey(RegistryKey key, string name, Keys fallback)
+        {
+            int value;
+            if (!Int32.TryParse(Convert.ToString(key.GetValue(name, (int)fallback)), out value))
+                return fallback;
+            Keys candidate = (Keys)value;
+            return HotkeyFormatter.IsSupportedKey(candidate) ? candidate : fallback;
+        }
+
+        private static string ReadUnlockCode(RegistryKey key, string name, string fallback)
+        {
+            string value = Convert.ToString(key.GetValue(name, fallback)).Trim().ToLowerInvariant();
+            return IsValidUnlockCode(value) ? value : fallback;
+        }
+
+        internal static bool IsValidUnlockCode(string value)
+        {
+            if (String.IsNullOrEmpty(value) || value.Length < 4 || value.Length > 12)
+                return false;
+            foreach (char character in value)
+                if (character < 'a' || character > 'z')
+                    return false;
+            return true;
+        }
+    }
+
+    internal static class HotkeyFormatter
+    {
+        internal const int Alt = 0x0001;
+        internal const int Control = 0x0002;
+        internal const int Shift = 0x0004;
+
+        internal static bool IsSupportedKey(Keys key)
+        {
+            return (key >= Keys.A && key <= Keys.Z) || (key >= Keys.F1 && key <= Keys.F12);
+        }
+
+        internal static string Format(int modifiers, Keys key)
+        {
+            List<string> pieces = new List<string>();
+            if ((modifiers & Control) != 0) pieces.Add("Ctrl");
+            if ((modifiers & Alt) != 0) pieces.Add("Alt");
+            if ((modifiers & Shift) != 0) pieces.Add("Shift");
+            pieces.Add(key.ToString());
+            return String.Join(" + ", pieces.ToArray());
         }
     }
 
@@ -412,6 +472,7 @@ namespace TimCookGuard
         private readonly TimCookSound timCookSound;
         private readonly GuardSettings settings;
         private readonly NotifyIcon trayIcon;
+        private ToolStripMenuItem armMenuItem;
         private readonly Icon idleTrayIcon;
         private readonly Icon armedTrayIcon;
         private bool challengeActive;
@@ -436,7 +497,7 @@ namespace TimCookGuard
             appLogo = LoadEmbeddedLogo();
             timCookSound = new TimCookSound();
             lastObservedInputTick = GetLastInputTick();
-            armHotkey = new ArmHotkeyWindow(ArmManually);
+            armHotkey = new ArmHotkeyWindow(ArmManually, settings.HotkeyModifiers, settings.HotkeyKey);
             SystemEvents.SessionSwitch += SessionSwitch;
             monitorTimer = new Timer();
             monitorTimer.Interval = 50;
@@ -574,7 +635,9 @@ namespace TimCookGuard
         {
             ContextMenuStrip menu = new ContextMenuStrip();
             menu.Items.Add("Open Control Panel", null, delegate { ShowControlPanel(); });
-            menu.Items.Add("Arm Now  (Ctrl+Alt+T)", null, delegate { ArmManually(); });
+            armMenuItem = new ToolStripMenuItem("Arm Now  (" + HotkeyFormatter.Format(settings.HotkeyModifiers, settings.HotkeyKey) + ")");
+            armMenuItem.Click += delegate { ArmManually(); };
+            menu.Items.Add(armMenuItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Exit", null, delegate { ExitGuard(); });
 
@@ -641,7 +704,9 @@ namespace TimCookGuard
 
         private void SaveSettings()
         {
+            armHotkey.Update(settings.HotkeyModifiers, settings.HotkeyKey);
             settings.Save();
+            armMenuItem.Text = "Arm Now  (" + HotkeyFormatter.Format(settings.HotkeyModifiers, settings.HotkeyKey) + ")";
             string previousText = trayIcon.Text;
             trayIcon.Text = "Tim Cook Guard - settings saved";
             Timer reset = new Timer();
@@ -680,7 +745,7 @@ namespace TimCookGuard
             monitorTimer.Stop();
             timCookSound.Play();
             SetArmedVisual(false);
-            keyboardBlocker = new KeyboardBlocker(HideTimCook, WrongCodeReaction);
+            keyboardBlocker = new KeyboardBlocker(HideTimCook, WrongCodeReaction, settings.UnlockCode);
             keyboardBlocker.Install();
 
             foreach (Screen screen in Screen.AllScreens)
@@ -1029,13 +1094,24 @@ namespace TimCookGuard
 
     internal static class IncidentLog
     {
+        internal static string DownloadsPath
+        {
+            get
+            {
+                string downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+                Directory.CreateDirectory(downloads);
+                return downloads;
+            }
+        }
+
+        internal static string LogPath { get { return Path.Combine(DownloadsPath, "TimCookGuard-Incidents.log"); } }
+
         internal static void Write(string outcome, IList<string> files)
         {
             try
             {
-                string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "TimCookGuard-Incidents.log");
                 string line = DateTime.Now.ToString("O") + " | " + outcome + " | " + String.Join(", ", new List<string>(files).ConvertAll(Path.GetFileName).ToArray()) + Environment.NewLine;
-                File.AppendAllText(path, line, Encoding.UTF8);
+                File.AppendAllText(LogPath, line, Encoding.UTF8);
             }
             catch
             {
@@ -1168,17 +1244,36 @@ namespace TimCookGuard
     {
         private const int WM_HOTKEY = 0x0312;
         private const int HotkeyId = 0x5443;
-        private const uint ModAlt = 0x0001;
-        private const uint ModControl = 0x0002;
         private readonly Action arm;
+        private int modifiers;
+        private Keys key;
         private bool disposed;
 
-        internal ArmHotkeyWindow(Action armCallback)
+        internal ArmHotkeyWindow(Action armCallback, int initialModifiers, Keys initialKey)
         {
             arm = armCallback;
             CreateHandle(new CreateParams());
-            if (!RegisterHotKey(Handle, HotkeyId, ModControl | ModAlt, (uint)Keys.T))
-                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Could not register Ctrl+Alt+T.");
+            modifiers = initialModifiers;
+            key = initialKey;
+            if (!RegisterHotKey(Handle, HotkeyId, (uint)modifiers, (uint)key))
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Could not register " + HotkeyFormatter.Format(modifiers, key) + ".");
+        }
+
+        internal void Update(int newModifiers, Keys newKey)
+        {
+            if (newModifiers == modifiers && newKey == key)
+                return;
+            int oldModifiers = modifiers;
+            Keys oldKey = key;
+            UnregisterHotKey(Handle, HotkeyId);
+            if (!RegisterHotKey(Handle, HotkeyId, (uint)newModifiers, (uint)newKey))
+            {
+                int error = Marshal.GetLastWin32Error();
+                RegisterHotKey(Handle, HotkeyId, (uint)oldModifiers, (uint)oldKey);
+                throw new System.ComponentModel.Win32Exception(error, "Could not register " + HotkeyFormatter.Format(newModifiers, newKey) + ".");
+            }
+            modifiers = newModifiers;
+            key = newKey;
         }
 
         protected override void WndProc(ref Message m)
@@ -1264,15 +1359,18 @@ namespace TimCookGuard
         private const int WM_SYSKEYDOWN = 0x0104;
         private readonly Action accepted;
         private readonly Action rejected;
+        private readonly string unlockCode;
         private readonly StringBuilder typed = new StringBuilder();
         private readonly LowLevelKeyboardProc callback;
+        private int lettersSinceReaction;
         private IntPtr hook;
         private bool disposed;
 
-        internal KeyboardBlocker(Action acceptedCallback, Action rejectedCallback)
+        internal KeyboardBlocker(Action acceptedCallback, Action rejectedCallback, string configuredCode)
         {
             accepted = acceptedCallback;
             rejected = rejectedCallback;
+            unlockCode = configuredCode.ToLowerInvariant();
             callback = HookCallback;
         }
 
@@ -1294,12 +1392,21 @@ namespace TimCookGuard
                 if (keyCode >= (int)Keys.A && keyCode <= (int)Keys.Z)
                 {
                     typed.Append(Char.ToLowerInvariant((char)keyCode));
-                    if (typed.Length == 4)
+                    while (typed.Length > unlockCode.Length)
+                        typed.Remove(0, 1);
+                    lettersSinceReaction++;
+                    if (typed.ToString() == unlockCode)
                     {
-                        bool correct = typed.ToString() == "cook";
                         typed.Clear();
+                        lettersSinceReaction = 0;
                         if (Application.OpenForms.Count > 0)
-                            Application.OpenForms[0].BeginInvoke(correct ? accepted : rejected);
+                            Application.OpenForms[0].BeginInvoke(accepted);
+                    }
+                    else if (lettersSinceReaction >= unlockCode.Length)
+                    {
+                        lettersSinceReaction = 0;
+                        if (Application.OpenForms.Count > 0)
+                            Application.OpenForms[0].BeginInvoke(rejected);
                     }
                 }
                 return (IntPtr)1;

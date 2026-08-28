@@ -154,7 +154,7 @@ namespace TimCookGuardInstaller
             using (RegistryKey key = Registry.CurrentUser.CreateSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\TimCookGuard"))
             {
                 key.SetValue("DisplayName", ProductName);
-                key.SetValue("DisplayVersion", "1.0.0");
+                key.SetValue("DisplayVersion", "1.1.0");
                 key.SetValue("Publisher", "DaBeaklyBird");
                 key.SetValue("InstallLocation", GetInstallDirectory());
                 key.SetValue("DisplayIcon", applicationPath);
