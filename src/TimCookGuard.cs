@@ -722,7 +722,7 @@ namespace TimCookGuard
             shutdownTimer.Stop();
             videoStartTimer.Stop();
             List<string> files = evidence == null ? new List<string>() : evidence.FinishForShutdown(8000);
-            IncidentLog.Write("shutdown", files);
+            IncidentLog.Write(settings.ShutdownEnabled ? "shutdown" : "deadline-no-shutdown", files);
             if (settings.DiscordEnabled && !String.IsNullOrWhiteSpace(settings.DiscordWebhook))
                 DiscordUploader.Send(settings.DiscordWebhook, files, 8000);
             if (!settings.ShutdownEnabled)
