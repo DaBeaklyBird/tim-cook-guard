@@ -35,6 +35,7 @@ namespace TimCookGuard
         private readonly Label status = new Label();
         private Panel modePill;
         private Label modeLabel;
+        private bool armedState;
 
         internal ControlPanelForm(GuardSettings current, Action save, Action arm, Image appLogo)
         {
@@ -74,7 +75,7 @@ namespace TimCookGuard
             header.Controls.Add(mark);
 
             header.Controls.Add(MakeLabel("TIM COOK GUARD", 122, 20, 410, 35, 21F, FontStyle.Bold, TextPrimary));
-            header.Controls.Add(MakeLabel("Manual presence protection · evidence capture · forced response", 124, 58, 520, 24, 9.5F, FontStyle.Regular, TextMuted));
+            header.Controls.Add(MakeLabel("Presence protection · evidence capture · response controls", 124, 58, 520, 24, 9.5F, FontStyle.Regular, TextMuted));
 
             modePill = new Panel();
             modePill.BackColor = Color.FromArgb(13, 66, 46);
@@ -261,11 +262,26 @@ namespace TimCookGuard
 
         private void UpdateModeVisual()
         {
+            if (armedState)
+            {
+                modeLabel.Text = "●  ARMED";
+                modeLabel.ForeColor = Color.White;
+                modePill.BackColor = Color.FromArgb(24, 145, 87);
+                return;
+            }
             bool automatic = automaticArming.Checked;
             idle.Enabled = automatic;
             modeLabel.Text = automatic ? "●  AUTO MODE" : "●  MANUAL MODE";
             modeLabel.ForeColor = automatic ? Color.FromArgb(255, 193, 77) : Green;
             modePill.BackColor = automatic ? Color.FromArgb(78, 52, 14) : Color.FromArgb(13, 66, 46);
+        }
+
+        internal void SetArmedState(bool armed)
+        {
+            armedState = armed;
+            UpdateModeVisual();
+            status.ForeColor = armed ? Green : TextMuted;
+            status.Text = armed ? "Guard is armed" : "Settings ready";
         }
 
         private void SaveClicked(object sender, EventArgs e)

@@ -26,7 +26,10 @@ namespace TimCookGuard
                 bool passed = GuardContext.IsTopRight(new Point(1919, 0), testScreen)
                     && GuardContext.IsTopLeft(new Point(0, 0), testScreen)
                     && !GuardContext.IsTopRight(new Point(960, 540), testScreen)
-                    && !GuardContext.IsTopLeft(new Point(960, 540), testScreen);
+                    && !GuardContext.IsTopLeft(new Point(960, 540), testScreen)
+                    && EmbeddedResourceExists("TimCookGuard.tim-cook.jpg", 1024)
+                    && EmbeddedResourceExists("TimCookGuard.logo.png", 1024)
+                    && EmbeddedResourceExists("TimCookGuard.wow.mp3", 1024);
                 Console.WriteLine(passed ? "SELF-TEST PASSED" : "SELF-TEST FAILED");
                 Environment.ExitCode = passed ? 0 : 1;
                 return;
@@ -44,6 +47,12 @@ namespace TimCookGuard
                 using (GuardContext context = new GuardContext(showSettings))
                     Application.Run(context);
             }
+        }
+
+        private static bool EmbeddedResourceExists(string name, int minimumBytes)
+        {
+            using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(name))
+                return stream != null && stream.Length >= minimumBytes;
         }
     }
 
@@ -403,6 +412,8 @@ namespace TimCookGuard
         private readonly TimCookSound timCookSound;
         private readonly GuardSettings settings;
         private readonly NotifyIcon trayIcon;
+        private readonly Icon idleTrayIcon;
+        private readonly Icon armedTrayIcon;
         private bool challengeActive;
         private bool sawTopRight;
         private long challengeStarted;
@@ -410,6 +421,7 @@ namespace TimCookGuard
         private bool manualArmSettling;
         private bool manuallyArmed;
         private bool manualArmLatched;
+        private bool armedVisualActive;
         private bool sessionLocked;
         private long manualArmStarted;
         private KeyboardBlocker keyboardBlocker;
@@ -434,6 +446,8 @@ namespace TimCookGuard
             shutdownTimer.Tick += ShutdownTimerTick;
             videoStartTimer = new Timer();
             videoStartTimer.Tick += VideoStartTimerTick;
+            idleTrayIcon = BuildTrayIcon(false);
+            armedTrayIcon = BuildTrayIcon(true);
             trayIcon = CreateTrayIcon();
             if (showSettings)
                 ShowControlPanel();
@@ -471,6 +485,7 @@ namespace TimCookGuard
                     challengeActive = true;
                     sawTopRight = false;
                     challengeStarted = Stopwatch.GetTimestamp();
+                    SetArmedVisual(true);
                 }
             }
 
@@ -489,6 +504,7 @@ namespace TimCookGuard
                 challengeActive = false;
                 manualArmLatched = false;
                 lastObservedInputTick = GetLastInputTick();
+                SetArmedVisual(false);
                 return;
             }
 
@@ -536,6 +552,7 @@ namespace TimCookGuard
             else
             {
                 manuallyArmed = false;
+                SetArmedVisual(false);
             }
         }
 
@@ -549,6 +566,7 @@ namespace TimCookGuard
             manualArmSettling = true;
             manualArmStarted = Stopwatch.GetTimestamp();
             lastObservedInputTick = GetLastInputTick();
+            SetArmedVisual(true);
             ArmConfirmationForm.ShowBrief();
         }
 
@@ -561,7 +579,7 @@ namespace TimCookGuard
             menu.Items.Add("Exit", null, delegate { ExitGuard(); });
 
             NotifyIcon icon = new NotifyIcon();
-            icon.Icon = Icon.ExtractAssociatedIcon(Assembly.GetExecutingAssembly().Location);
+            icon.Icon = idleTrayIcon;
             icon.Text = "Tim Cook Guard";
             icon.ContextMenuStrip = menu;
             icon.Visible = true;
@@ -569,10 +587,53 @@ namespace TimCookGuard
             return icon;
         }
 
+        private Icon BuildTrayIcon(bool armed)
+        {
+            using (Bitmap bitmap = new Bitmap(32, 32))
+            using (Graphics graphics = Graphics.FromImage(bitmap))
+            {
+                graphics.Clear(Color.Transparent);
+                graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                graphics.DrawImage(appLogo, new Rectangle(0, 0, 32, 32));
+                if (armed)
+                {
+                    graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                    graphics.FillEllipse(Brushes.White, 19, 19, 13, 13);
+                    using (Brush green = new SolidBrush(Color.FromArgb(43, 214, 123)))
+                        graphics.FillEllipse(green, 21, 21, 9, 9);
+                }
+                IntPtr handle = bitmap.GetHicon();
+                try
+                {
+                    using (Icon temporary = Icon.FromHandle(handle))
+                        return (Icon)temporary.Clone();
+                }
+                finally
+                {
+                    DestroyIcon(handle);
+                }
+            }
+        }
+
+        private void SetArmedVisual(bool armed)
+        {
+            armedVisualActive = armed;
+            if (trayIcon != null)
+            {
+                trayIcon.Icon = armed ? armedTrayIcon : idleTrayIcon;
+                trayIcon.Text = armed ? "Tim Cook Guard - ARMED" : "Tim Cook Guard";
+            }
+            if (controlPanel != null && !controlPanel.IsDisposed)
+                controlPanel.SetArmedState(armed);
+        }
+
         private void ShowControlPanel()
         {
             if (controlPanel == null || controlPanel.IsDisposed)
+            {
                 controlPanel = new ControlPanelForm(settings, SaveSettings, ArmManually, appLogo);
+                controlPanel.SetArmedState(armedVisualActive);
+            }
             controlPanel.Show();
             controlPanel.WindowState = FormWindowState.Normal;
             controlPanel.Activate();
@@ -581,6 +642,7 @@ namespace TimCookGuard
         private void SaveSettings()
         {
             settings.Save();
+            string previousText = trayIcon.Text;
             trayIcon.Text = "Tim Cook Guard - settings saved";
             Timer reset = new Timer();
             reset.Interval = 1500;
@@ -588,7 +650,7 @@ namespace TimCookGuard
             {
                 reset.Stop();
                 reset.Dispose();
-                trayIcon.Text = "Tim Cook Guard";
+                trayIcon.Text = previousText;
             };
             reset.Start();
         }
@@ -617,6 +679,7 @@ namespace TimCookGuard
         {
             monitorTimer.Stop();
             timCookSound.Play();
+            SetArmedVisual(false);
             keyboardBlocker = new KeyboardBlocker(HideTimCook, WrongCodeReaction);
             keyboardBlocker.Install();
 
@@ -699,6 +762,7 @@ namespace TimCookGuard
             manualArmLatched = false;
             manualArmSettling = false;
             lastObservedInputTick = GetLastInputTick();
+            SetArmedVisual(false);
             monitorTimer.Start();
         }
 
@@ -744,6 +808,8 @@ namespace TimCookGuard
                 armHotkey.Dispose();
                 trayIcon.Visible = false;
                 trayIcon.Dispose();
+                idleTrayIcon.Dispose();
+                armedTrayIcon.Dispose();
                 if (keyboardBlocker != null)
                     keyboardBlocker.Dispose();
                 timCookSound.Dispose();
@@ -762,6 +828,9 @@ namespace TimCookGuard
 
         [DllImport("user32.dll")]
         private static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool DestroyIcon(IntPtr hIcon);
     }
 
     internal sealed class EvidenceSession

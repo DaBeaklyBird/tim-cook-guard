@@ -5,6 +5,7 @@ Tim Cook Guard is a playful Windows tray utility that can watch for activity aft
 ## Features
 
 - Silent manual arming with `Ctrl+Alt+T`
+- Live armed badge in the dashboard and a green status badge on the tray icon
 - Optional automatic arming after a configurable idle period
 - Three-second top-right then top-left mouse gesture
 - Full-screen takeover on every monitor
